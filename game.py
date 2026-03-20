@@ -57,6 +57,16 @@ def load_sprite_sheet(path, rows, cols):
 PLAYER_FRAMES = load_sprite_sheet(os.path.join(RES_DIR, 'player.png'), 4, 3)
 ENEMY_FRAMES = load_sprite_sheet(os.path.join(RES_DIR, 'enemy.png'), 4, 4)
 
+# 技能图标加载（4个技能）
+SKILL_ICONS = []
+for i in range(1, 5):
+    icon_path = os.path.join(RES_DIR, f'skill{i}.png')
+    if os.path.exists(icon_path):
+        icon = pygame.image.load(icon_path)
+        SKILL_ICONS.append(pygame.transform.scale(icon, (40, 40)))
+    else:
+        SKILL_ICONS.append(None)
+
 # 动画计时
 PLAYER_ANIM_SPEED = 0.15  # 每帧持续时间（秒）
 
@@ -460,6 +470,20 @@ class Player:
         else:
             # 静止时回到 idle 帧
             self.anim_frame = 0
+    
+    def face_towards(self, target_x, target_y, cam_x, cam_y, dt):
+        """面向目标位置（用于站立时朝向鼠标）"""
+        # 将屏幕坐标转换为世界坐标
+        world_x = (target_x + cam_x) / TILE
+        world_y = (target_y + cam_y) / TILE
+        
+        dx = world_x - self.x
+        dy = world_y - self.y
+        
+        if abs(dy) > abs(dx):
+            self.anim_dir = 0 if dy > 0 else 3  # 下 or 上
+        else:
+            self.anim_dir = 1 if dx < 0 else 2  # 左 or 右
         
         # ----- 3. 冷却计时 -----
         if self.atk_cd > 0:
@@ -767,6 +791,7 @@ class Game:
         self.paused = False
         self.game_over = False
         self.dist_to_exit = 999  # 玩家到入口的距离
+        self.mouse_x, self.mouse_y = 0, 0  # 鼠标位置
         
         self.dungeon = None
         self.flow = None
@@ -828,8 +853,6 @@ class Game:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    # 监听所有按键
-                    print(f"EVENT: type={event.type}, key={event.key}, unicode='{event.unicode}', scancode={event.scancode}")
                     self._on_key(event.key, event.unicode, event.scancode)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self._on_click(event.button, event.pos)
@@ -885,7 +908,18 @@ class Game:
     def _update(self, dt):
         # 玩家
         keys = pygame.key.get_pressed()
+        
+        # 记录移动状态
+        dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
+        dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
+        is_moving = (dx != 0 or dy != 0)
+        
         self.player.update(dt, self.dungeon, keys)
+        
+        # 如果不移动，面向鼠标
+        if not is_moving:
+            mx, my = pygame.mouse.get_pos()
+            self.player.face_towards(mx, my, self.cam_x, self.cam_y, dt)
         
         # 流场更新
         if abs(self.player.x - self.flow_update_x) > 0.5 or abs(self.player.y - self.flow_update_y) > 0.5:
@@ -1068,14 +1102,29 @@ class Game:
         for i, sk in enumerate(self.player.skills):
             x = SCREEN_W // 2 - 120 + i * 60
             y = SCREEN_H - 70
+            
+            # 技能图标背景
             pygame.draw.rect(self.screen, (20, 20, 30), (x, y, 50, 50), border_radius=8)
             
-            if sk['timer'] > 0:
-                cd = self.font.render(f"{sk['timer']:.1f}", True, C['white'])
-                self.screen.blit(cd, (x + 15, y + 18))
+            # 绘制技能图标（如果有）
+            if SKILL_ICONS[i]:
+                icon = SKILL_ICONS[i]
+                self.screen.blit(icon, (x + 5, y + 5))
             else:
+                # 无图标时显示颜色方块+数字
+                colors = [(255, 100, 0), (100, 200, 255), (255, 200, 0), (100, 255, 100)]
+                pygame.draw.rect(self.screen, colors[i], (x + 5, y + 5, 40, 40), border_radius=4)
                 k = self.font.render(str(i + 1), True, C['white'])
                 self.screen.blit(k, (x + 18, y + 18))
+            
+            # 冷却显示
+            if sk['timer'] > 0:
+                # 半透明遮罩
+                overlay = pygame.Surface((50, 50), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 150))
+                self.screen.blit(overlay, (x, y))
+                cd = self.font.render(f"{sk['timer']:.1f}", True, C['white'])
+                self.screen.blit(cd, (x + 15, y + 18))
         
         # 消息
         for i, m in enumerate(self.msgs):

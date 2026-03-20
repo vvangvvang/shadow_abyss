@@ -766,6 +766,7 @@ class Game:
         self.floor = 1
         self.paused = False
         self.game_over = False
+        self.dist_to_exit = 999  # 玩家到入口的距离
         
         self.dungeon = None
         self.flow = None
@@ -827,7 +828,9 @@ class Game:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    self._on_key(event.key)
+                    # 监听所有按键
+                    print(f"EVENT: type={event.type}, key={event.key}, unicode='{event.unicode}', scancode={event.scancode}")
+                    self._on_key(event.key, event.unicode, event.scancode)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self._on_click(event.button, event.pos)
             
@@ -839,19 +842,31 @@ class Game:
         
         pygame.quit()
     
-    def _on_key(self, key):
-        if key == pygame.K_ESCAPE:
+    def _on_key(self, key, unicode_char, scancode):
+        # 调试
+        print(f"Key: key={key}, unicode='{unicode_char}', scancode={scancode}")
+        
+        # 使用 unicode 字符检测
+        if unicode_char == '\x1b':  # ESC
             self.paused = not self.paused
-        elif key == pygame.K_r and self.game_over:
+        elif unicode_char == 'r' and self.game_over:
             self.game_over = False
             self.floor = 1
             self.player = None
             self.init_floor()
-        elif key in [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4]:
+        elif unicode_char == 'e' or unicode_char == 'E':
+            # 按E进入下一层（需在入口附近）
+            dist = math.sqrt((self.player.x - self.dungeon.exit[0])**2 + (self.player.y - self.dungeon.exit[1])**2)
+            print(f"E pressed! dist={dist}")
+            if dist < 1.5:
+                print("Going to next floor!")
+                self.floor += 1
+                self.init_floor()
+        elif unicode_char in ['1', '2', '3', '4']:
             mx, my = pygame.mouse.get_pos()
             wx = (mx + self.cam_x) / TILE
             wy = (my + self.cam_y) / TILE
-            self.player.use_skill(key - pygame.K_1, wx, wy, self)
+            self.player.use_skill(int(unicode_char) - 1, wx, wy, self)
     
     def _on_click(self, btn, pos):
         if self.game_over or self.paused:
@@ -921,10 +936,8 @@ class Game:
                     self.player.gold += lt['amt']
                 self.loot.remove(lt)
         
-        # 检查出口
-        if math.sqrt((self.player.x - self.dungeon.exit[0])**2 + (self.player.y - self.dungeon.exit[1])**2) < 1:
-            self.floor += 1
-            self.init_floor()
+        # 检查是否在入口旁（用于提示）
+        self.dist_to_exit = math.sqrt((self.player.x - self.dungeon.exit[0])**2 + (self.player.y - self.dungeon.exit[1])**2)
         
         # 死亡
         if self.player.hp <= 0:
@@ -974,10 +987,20 @@ class Game:
                         fy = cy + flow[1] * 12
                         pygame.draw.line(self.screen, C['flow'], (cx, cy), (fx, fy), 2)
         
-        # 出口
+        # 出口/入口
         ex = self.dungeon.exit[0] * TILE - self.cam_x
         ey = self.dungeon.exit[1] * TILE - self.cam_y
-        pygame.draw.rect(self.screen, C['exit'], (ex + 4, ey + 4, TILE - 8, TILE - 8))
+        
+        # 绘制传送门效果（旋转动画）
+        portal_offset = int(pygame.time.get_ticks() / 100) % 4
+        portal_colors = [(68, 170, 136), (100, 200, 180), (68, 170, 136), (50, 140, 110)]
+        pygame.draw.circle(self.screen, portal_colors[portal_offset], (int(ex + TILE/2), int(ey + TILE/2)), TILE//2 + portal_offset)
+        pygame.draw.circle(self.screen, (40, 40, 50), (int(ex + TILE/2), int(ey + TILE/2)), TILE//3)
+        
+        # 提示按E进入
+        if self.dist_to_exit < 2:
+            hint = self.font.render("Press E", True, C['white'])
+            self.screen.blit(hint, (ex, ey - 20))
         
         # 战利品
         for lt in self.loot:

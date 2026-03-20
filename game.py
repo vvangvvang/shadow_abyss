@@ -22,6 +22,7 @@ import pygame       # Pygame游戏框架
 import random       # 随机数生成
 import math         # 数学运算（距离计算、三角函数等）
 from collections import deque  # 双端队列（用于BFS寻路）
+import os           # 文件路径处理
 
 # ===== Pygame初始化 =====
 pygame.init()
@@ -35,6 +36,29 @@ SCREEN_W, SCREEN_H = 1280, 720   # 宽度1280，高度720像素
 
 # 瓦片尺寸（每个格子32x32像素）
 TILE = 32
+
+# ===== 精灵图加载 =====
+RES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'res')
+
+def load_sprite_sheet(path, rows, cols):
+    """加载并切割精灵图"""
+    sheet = pygame.image.load(path)
+    frame_w, frame_h = sheet.get_width() // cols, sheet.get_height() // rows
+    frames = []
+    for row in range(rows):
+        row_frames = []
+        for col in range(cols):
+            frame = sheet.subsurface((col * frame_w, row * frame_h, frame_w, frame_h))
+            row_frames.append(pygame.transform.scale(frame, (TILE, TILE)))
+        frames.append(row_frames)
+    return frames
+
+# 玩家：4行3列，敌人：4行4列
+PLAYER_FRAMES = load_sprite_sheet(os.path.join(RES_DIR, 'player.png'), 4, 3)
+ENEMY_FRAMES = load_sprite_sheet(os.path.join(RES_DIR, 'enemy.png'), 4, 4)
+
+# 动画计时
+PLAYER_ANIM_SPEED = 0.15  # 每帧持续时间（秒）
 
 # 游戏帧率（每秒30帧）
 FPS = 30
@@ -363,6 +387,11 @@ class Player:
         self.atk_cd = 0                         # 攻击冷却
         self.target = None                       # 当前选中的敌人
         
+        # 动画系统
+        self.anim_dir = 0    # 当前方向索引（0=下, 1=左, 2=右, 3=上）
+        self.anim_frame = 0  # 当前动画帧
+        self.anim_timer = 0  # 动画计时器
+        
         # 技能列表
         # 每个技能包含：
         # - name: 技能名称
@@ -416,6 +445,21 @@ class Player:
                 self.x = new_x
             if self._can_move(self.x, new_y, dungeon):
                 self.y = new_y
+            
+            # 更新方向：0=下, 1=左, 2=右, 3=上
+            if abs(dy) > abs(dx):
+                self.anim_dir = 0 if dy > 0 else 3  # 下 or 上
+            else:
+                self.anim_dir = 1 if dx < 0 else 2  # 左 or 右
+            
+            # 更新动画
+            self.anim_timer += dt
+            if self.anim_timer >= PLAYER_ANIM_SPEED:
+                self.anim_timer = 0
+                self.anim_frame = (self.anim_frame + 1) % 3
+        else:
+            # 静止时回到 idle 帧
+            self.anim_frame = 0
         
         # ----- 3. 冷却计时 -----
         if self.atk_cd > 0:
@@ -941,23 +985,35 @@ class Game:
             py = lt['y'] * TILE - self.cam_y
             pygame.draw.circle(self.screen, C['gold'], (int(px), int(py)), 6)
         
-        # 敌人
+        # 敌人（使用精灵图）
         for e in self.enemies:
             px = e.x * TILE - self.cam_x
             py = e.y * TILE - self.cam_y
             r = int(e.radius * TILE)
-            pygame.draw.circle(self.screen, C['enemy'], (int(px), int(py)), r)
+            
+            # 敌人动画（简单的帧循环）
+            e_anim_frame = int(pygame.time.get_ticks() / 200) % 4  # 4列动画
+            
+            # Boss体型更大
+            if e.etype == 'boss':
+                boss_sprite = pygame.transform.scale(ENEMY_FRAMES[0][e_anim_frame], (TILE * 2, TILE * 2))
+                sprite_rect = boss_sprite.get_rect(center=(int(px), int(py)))
+                self.screen.blit(boss_sprite, sprite_rect)
+            else:
+                sprite_rect = ENEMY_FRAMES[0][e_anim_frame].get_rect(center=(int(px), int(py)))
+                self.screen.blit(ENEMY_FRAMES[0][e_anim_frame], sprite_rect)
             
             # 血条
             if e.hp < e.max_hp:
                 pygame.draw.rect(self.screen, (50, 50, 50), (px - 16, py - r - 8, 32, 4))
                 pygame.draw.rect(self.screen, C['hp'], (px - 16, py - r - 8, 32 * e.hp / e.max_hp, 4))
         
-        # 玩家
+        # 玩家（使用精灵图）
         px = self.player.x * TILE - self.cam_x
         py = self.player.y * TILE - self.cam_y
-        r = int(self.player.radius * TILE)
-        pygame.draw.circle(self.screen, C['player'], (int(px), int(py)), r)
+        player_frame = PLAYER_FRAMES[self.player.anim_dir][self.player.anim_frame]
+        sprite_rect = player_frame.get_rect(center=(int(px), int(py)))
+        self.screen.blit(player_frame, sprite_rect)
         
         # 投射物
         for p in self.projs:
